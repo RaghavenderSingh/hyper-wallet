@@ -10,30 +10,39 @@ module.exports = {
     module: {
         rules: [
             {
-              test: /\.tsx?$/,
-               use: [
-                 {
-                  loader: "ts-loader",
-                   options: {
-                     compilerOptions: { noEmit: false },
+                test: /\.tsx?$/,
+                use: [
+                    {
+                        loader: "ts-loader",
+                        options: {
+                            compilerOptions: { noEmit: false },
+                        }
                     }
-                  }],
-               exclude: /node_modules/,
+                ],
+                exclude: /node_modules/,
             },
             {
-              exclude: /node_modules/,
-              test: /\.css$/i,
-               use: [
-                  "style-loader",
-                  "css-loader"
-               ]
+                exclude: /node_modules/,
+                test: /\.css$/i,
+                use: [
+                    "style-loader",
+                    "css-loader"
+                ]
             },
+            {
+                test: /\.(png|jpg|jpeg|gif|svg)$/i,
+                type: 'asset/resource',
+                generator: {
+                    filename: 'assets/[name][ext]'
+                }
+            }
         ],
     },
     plugins: [
         new CopyPlugin({
             patterns: [
                 { from: "manifest.json", to: "../manifest.json" },
+                { from: "src/assets", to: "../assets" }  // Add this line to copy assets
             ],
         }),
         ...getHtmlPlugins(["index"]),
