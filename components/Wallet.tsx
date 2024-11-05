@@ -1,355 +1,306 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { use, useEffect, useState } from "react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
-  ChevronDown,
-  ChevronUp,
-  Copy,
-  Eye,
-  EyeOff,
-  Grid2X2,
-  List,
-  Plus,
-  Trash,
-  Wallet,
-} from "lucide-react";
-import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from "bip39";
-import { derivePath } from "ed25519-hd-key";
-import { Keypair } from "@solana/web3.js";
-import { ethers } from "ethers";
+import { Eye, EyeOff, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { EthereumWallet, SolanaWallet, WalletState } from "@/lib/types";
 
-type WalletType = "solana" | "ethereum";
+const MultiWalletGenerator: React.FC = () => {
+  const [wallets, setWallets] = useState<WalletState>({
+    mnemonic: "",
+    solana: [],
+    ethereum: [],
+  });
+  const [showPrivateKeys, setShowPrivateKeys] = useState<boolean>(false);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [walletNumber, setWalletNumber] = useState<number>(1);
 
-interface WalletData {
-  type: WalletType;
-  publicKey: string;
-  privateKey: string;
-  path: string;
-  index: number;
-}
-
-const WalletSetup: React.FC = () => {
-  const [step, setStep] = useState<"initial" | "display">("initial");
-  const [mnemonic, setMnemonic] = useState<string>("");
-  const [showMnemonic, setShowMnemonic] = useState<boolean>(false);
-  const [wallets, setWallets] = useState<WalletData[]>([]);
-  const [showPrivateKeys, setShowPrivateKeys] = useState<boolean[]>([]);
-  const [gridView, setGridView] = useState<boolean>(false);
-  const [mnemonicInput, setMnemonicInput] = useState<string>("");
-
-  useEffect(() => {
-    const storedWallets = localStorage.getItem("hdWallets");
-    const storedMnemonic = localStorage.getItem("hdMnemonic");
-    if (storedWallets && storedMnemonic) {
-      setWallets(JSON.parse(storedWallets));
-      setMnemonic(storedMnemonic);
-      setShowPrivateKeys(
-        new Array(JSON.parse(storedWallets).length).fill(false)
-      );
-      setStep("display");
-    }
-  }, []);
-
-  const generateWallet = (
-    type: WalletType,
-    index: number
-  ): WalletData | null => {
+  const generateInitialWallets = async (): Promise<void> => {
+    setIsGenerating(true);
     try {
-      const currentMnemonic = mnemonic || generateMnemonic(256);
-      if (!mnemonic) setMnemonic(currentMnemonic);
+      const [
+        { generateMnemonic, mnemonicToSeedSync },
+        { derivePath },
+        { Keypair },
+        { ethers },
+      ] = await Promise.all([
+        import("bip39"),
+        import("ed25519-hd-key"),
+        import("@solana/web3.js"),
+        import("ethers"),
+      ]);
 
-      const seedBuffer = mnemonicToSeedSync(currentMnemonic);
-      const path =
-        type === "solana"
-          ? `m/44'/501'/${index}'/0'`
-          : `m/44'/60'/0'/0/${index}`;
+      const mnemonic = generateMnemonic(256);
+      const seedBuffer = mnemonicToSeedSync(mnemonic);
+      const solanaWallets: SolanaWallet[] = [];
+      const ethereumWallets: EthereumWallet[] = [];
 
-      if (type === "solana") {
+      try {
+        const path = `m/44'/501'/0'/0'`;
         const { key: derivedSeed } = derivePath(
           path,
           seedBuffer.toString("hex")
         );
         const keypair = Keypair.fromSeed(derivedSeed.slice(0, 32));
-        return {
-          type: "solana",
+        solanaWallets.push({
+          path,
           publicKey: keypair.publicKey.toString(),
           privateKey: Buffer.from(keypair.secretKey).toString("hex"),
-          path,
-          index,
-        };
-      } else {
-        const hdNode = ethers.HDNodeWallet.fromPhrase(currentMnemonic);
-        const wallet = hdNode.derivePath(path);
-        return {
-          type: "ethereum",
-          publicKey: wallet.address,
-          privateKey: wallet.privateKey,
-          path,
-          index,
-        };
+        });
+      } catch (error) {
+        console.error("Error generating Solana wallet:", error);
+        toast.error("Error generating Solana wallet");
       }
+
+      try {
+        const hdNode = ethers.Wallet.fromPhrase(mnemonic);
+
+        const path = `m/44'/60'/0'/0/0`;
+        const wallet = ethers.HDNodeWallet.fromMnemonic(
+          ethers.Mnemonic.fromPhrase(mnemonic),
+          path
+        );
+        ethereumWallets.push({
+          path,
+          address: wallet.address,
+          privateKey: wallet.privateKey,
+        });
+      } catch (error) {
+        console.error("Error generating Ethereum wallets:", error);
+        toast.error("Error generating Ethereum wallets");
+      }
+
+      if (solanaWallets.length === 0 && ethereumWallets.length === 0) {
+        throw new Error("Failed to generate any wallets");
+      }
+
+      setWallets({
+        mnemonic,
+        solana: solanaWallets,
+        ethereum: ethereumWallets,
+      });
+
+      toast.success("Initial wallets generated successfully!");
     } catch (error) {
-      console.error("Wallet generation error:", error);
-      toast.error("Failed to generate wallet");
-      return null;
+      console.error("Error in wallet generation:", error);
+      toast.error(
+        "Failed to generate wallets. Please check console for details."
+      );
+    } finally {
+      setIsGenerating(false);
     }
   };
 
-  const handleCreateWallet = (type: WalletType): void => {
-    if (mnemonicInput && !validateMnemonic(mnemonicInput)) {
-      toast.error("Invalid recovery phrase");
-      return;
+  const generateAdditionalWallet = async (): Promise<void> => {
+    setIsGenerating(true);
+    try {
+      const [{ derivePath }, { Keypair }, { ethers }] = await Promise.all([
+        import("ed25519-hd-key"),
+        import("@solana/web3.js"),
+        import("ethers"),
+      ]);
+
+      const solanaWallet: SolanaWallet = await new Promise(
+        (resolve, reject) => {
+          try {
+            const path = `m/44'/501'/${walletNumber}'/0'`;
+            const { key: derivedSeed } = derivePath(path, wallets.mnemonic);
+            const keypair = Keypair.fromSeed(derivedSeed.slice(0, 32));
+            resolve({
+              path,
+              publicKey: keypair.publicKey.toString(),
+              privateKey: Buffer.from(keypair.secretKey).toString("hex"),
+            });
+          } catch (error) {
+            console.error("Error generating Solana wallet:", error);
+            reject(error);
+          }
+        }
+      );
+
+      const ethereumWallet: EthereumWallet = await new Promise(
+        (resolve, reject) => {
+          try {
+            const path = `m/44'/60'/0'/0/${walletNumber}`;
+            const wallet = ethers.HDNodeWallet.fromMnemonic(
+              ethers.Mnemonic.fromPhrase(wallets.mnemonic),
+              path
+            );
+            resolve({
+              path,
+              address: wallet.address,
+              privateKey: wallet.privateKey,
+            });
+          } catch (error) {
+            console.error("Error generating Ethereum wallets:", error);
+            reject(error);
+          }
+        }
+      );
+
+      setWallets((prevState) => ({
+        ...prevState,
+        solana: [...prevState.solana, solanaWallet],
+        ethereum: [...prevState.ethereum, ethereumWallet],
+      }));
+
+      setWalletNumber(walletNumber + 1);
+      toast.success("Additional wallet generated successfully!");
+    } catch (error) {
+      console.error("Error in wallet generation:", error);
+      toast.error(
+        "Failed to generate additional wallet. Please check console for details."
+      );
+    } finally {
+      setIsGenerating(false);
     }
+  };
 
-    if (mnemonicInput) {
-      setMnemonic(mnemonicInput);
+  const copyToClipboard = async (content: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.success("Copied to clipboard!");
+    } catch (error) {
+      console.error("Failed to copy:", error);
+      toast.error("Failed to copy to clipboard");
     }
-
-    const wallet = generateWallet(type, wallets.length);
-    if (wallet) {
-      const updatedWallets = [...wallets, wallet];
-      setWallets(updatedWallets);
-      setShowPrivateKeys([...showPrivateKeys, false]);
-      localStorage.setItem("hdWallets", JSON.stringify(updatedWallets));
-      localStorage.setItem("hdMnemonic", mnemonic || mnemonicInput);
-      setStep("display");
-      toast.success("Wallet created successfully!");
-    }
-  };
-
-  const handleDeleteWallet = (index: number): void => {
-    const updatedWallets = wallets.filter((_, i) => i !== index);
-    setWallets(updatedWallets);
-    setShowPrivateKeys(showPrivateKeys.filter((_, i) => i !== index));
-    localStorage.setItem("hdWallets", JSON.stringify(updatedWallets));
-    toast.success("Wallet deleted successfully!");
-  };
-
-  const handleClearWallets = (): void => {
-    localStorage.removeItem("hdWallets");
-    localStorage.removeItem("hdMnemonic");
-    setWallets([]);
-    setMnemonic("");
-    setShowPrivateKeys([]);
-    setStep("initial");
-    toast.success("All wallets cleared");
-  };
-
-  const copyToClipboard = (content: string): void => {
-    navigator.clipboard.writeText(content);
-    toast.success("Copied to clipboard!");
-  };
-
-  const togglePrivateKey = (index: number): void => {
-    setShowPrivateKeys(
-      showPrivateKeys.map((show, i) => (i === index ? !show : show))
-    );
   };
 
   return (
     <div className="min-h-screen p-4">
-      <Card className="w-full max-w-6xl mx-auto">
+      <Card className="w-full max-w-4xl mx-auto">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Wallet className="h-6 w-6" />
-              <CardTitle>HD Wallet Setup</CardTitle>
-            </div>
-            {wallets.length > 0 && (
-              <div className="flex gap-2">
+          <CardTitle className="flex items-center gap-2">
+            Multi-Wallet Generator
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-6">
+            <div className="flex gap-4">
+              <Button
+                onClick={() => generateInitialWallets()}
+                className="mb-4"
+                disabled={isGenerating}
+              >
+                {isGenerating ? "Generating..." : "Generate Initial Wallets"}
+              </Button>
+              <Button
+                onClick={() => generateAdditionalWallet()}
+                className="mb-4"
+                disabled={isGenerating}
+              >
+                Add Wallet
+              </Button>
+              {wallets.mnemonic && (
                 <Button
-                  variant="ghost"
-                  onClick={() => setGridView(!gridView)}
-                  className="hidden md:flex"
+                  variant="outline"
+                  onClick={() => setShowPrivateKeys(!showPrivateKeys)}
                 >
-                  {gridView ? <Grid2X2 /> : <List />}
+                  {showPrivateKeys ? (
+                    <EyeOff className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Eye className="h-4 w-4 mr-2" />
+                  )}
+                  {showPrivateKeys ? "Hide" : "Show"} Private Keys
                 </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="destructive">Clear All</Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Clear all wallets?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This action cannot be undone. All wallets will be
-                        removed.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleClearWallets}>
-                        Clear All
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+              )}
+            </div>
+
+            {wallets.mnemonic && (
+              <div className="space-y-6">
+                <div className="bg-secondary p-4 rounded-lg">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="font-bold">Seed Phrase:</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => copyToClipboard(wallets.mnemonic)}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p className="break-all">{wallets.mnemonic}</p>
+                </div>
+
+                {wallets.solana.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="font-bold">Solana Wallets:</h3>
+                    {wallets.solana.map((wallet, i) => (
+                      <div key={i} className="bg-secondary p-4 rounded-lg">
+                        <div className="flex justify-between items-center">
+                          <p className="text-sm mb-1 break-all">
+                            Public Key: {wallet.publicKey}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyToClipboard(wallet.publicKey)}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {showPrivateKeys && (
+                          <div className="flex justify-between items-center">
+                            <p className="text-sm break-all">
+                              Private Key: {wallet.privateKey}
+                            </p>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(wallet.privateKey)}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {wallets.ethereum.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="font-bold">Ethereum Wallets:</h3>
+                    {wallets.ethereum.map((wallet, i) => (
+                      <div key={i} className="bg-secondary p-4 rounded-lg">
+                        <div className="flex justify-between items-center">
+                          <p className="text-sm mb-1 break-all">
+                            Address: {wallet.address}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyToClipboard(wallet.address)}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {showPrivateKeys && (
+                          <div className="flex justify-between items-center">
+                            <p className="text-sm break-all">
+                              Private Key: {wallet.privateKey}
+                            </p>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => copyToClipboard(wallet.privateKey)}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
-        </CardHeader>
-
-        <CardContent>
-          {step === "initial" && (
-            <div className="flex flex-col gap-6">
-              <div className="flex flex-col gap-4">
-                <h2 className="text-2xl font-bold">Create New HD Wallet</h2>
-                <Input
-                  placeholder="Enter recovery phrase (optional)"
-                  value={mnemonicInput}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setMnemonicInput(e.target.value)
-                  }
-                  className="max-w-xl"
-                />
-              </div>
-              <div className="flex gap-4">
-                <Button onClick={() => handleCreateWallet("solana")}>
-                  Create Solana Wallet
-                </Button>
-                <Button onClick={() => handleCreateWallet("ethereum")}>
-                  Create Ethereum Wallet
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {mnemonic && (
-            <div className="border rounded-lg p-4 mb-6">
-              <div
-                className="flex justify-between items-center cursor-pointer"
-                onClick={() => setShowMnemonic(!showMnemonic)}
-              >
-                <h3 className="text-lg font-semibold">Recovery Phrase</h3>
-                <Button variant="ghost" size="sm">
-                  {showMnemonic ? <ChevronUp /> : <ChevronDown />}
-                </Button>
-              </div>
-              {showMnemonic && (
-                <div
-                  className="mt-4 p-4 bg-secondary rounded-lg cursor-pointer"
-                  onClick={() => copyToClipboard(mnemonic)}
-                >
-                  {mnemonic}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div
-            className={`grid gap-6 ${
-              gridView ? "md:grid-cols-2 lg:grid-cols-3" : "grid-cols-1"
-            }`}
-          >
-            {wallets.map((wallet, index) => (
-              <div key={index} className="border rounded-lg p-4">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">
-                    {wallet.type === "solana" ? "Solana" : "Ethereum"} Wallet{" "}
-                    {index + 1}
-                  </h3>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="sm">
-                        <Trash className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete wallet?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This action cannot be undone.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => handleDeleteWallet(index)}
-                        >
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium">
-                      Public Address
-                    </label>
-                    <div
-                      className="mt-1 p-2 bg-secondary rounded cursor-pointer truncate"
-                      onClick={() => copyToClipboard(wallet.publicKey)}
-                    >
-                      {wallet.publicKey}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium">Private Key</label>
-                    <div className="mt-1 relative">
-                      <div
-                        className="p-2 bg-secondary rounded cursor-pointer truncate"
-                        onClick={() => copyToClipboard(wallet.privateKey)}
-                      >
-                        {showPrivateKeys[index]
-                          ? wallet.privateKey
-                          : "•".repeat(20)}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-2 top-1/2 -translate-y-1/2"
-                        onClick={() => togglePrivateKey(index)}
-                      >
-                        {showPrivateKeys[index] ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium">
-                      Derivation Path
-                    </label>
-                    <div className="mt-1 p-2 bg-secondary rounded truncate">
-                      {wallet.path}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {wallets.length > 0 && (
-            <div className="mt-6">
-              <Button onClick={() => setStep("initial")} className="mr-2">
-                Add Another Wallet
-              </Button>
-            </div>
-          )}
         </CardContent>
       </Card>
     </div>
   );
 };
 
-export default WalletSetup;
+export default MultiWalletGenerator;
